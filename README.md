@@ -93,8 +93,10 @@ $('#editor').summernote({
 | Conditional comments (`<!--[if …]>`) | `color`, `background-color` |
 | Word Online wrapper divs (`SCXW*`, `BCX*`) | `<h1>`–`<h6>` (converted from headings) |
 | `color: windowtext` | `<ul>`, `<ol>`, `<li>` (reconstructed) |
-| Empty `<span>` and `<p>` elements | `<table>`, `<td>` (Excel) |
-| Superfluous `&nbsp;` padding | |
+| Empty `<span>` elements | `<table>`, `<td>` (Excel, with borders) |
+| Superfluous `&nbsp;` padding | `<p><br></p>` (empty paragraphs kept as spacers) |
+| Verbose border longhands (`border-width/style/color`) | `border` shorthand on `<td>`/`<th>` |
+| `font-size` on `<table>` and `<tr>` (stylesheet noise) | `border-collapse` on `<table>` |
 
 ---
 
