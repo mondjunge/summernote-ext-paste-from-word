@@ -121,6 +121,7 @@
         self._unwrapDivs(container);
         self._mergeSiblingLists(container);
         self._removeNoiseNodes(container);
+        self._normalizeBorders(container);
         self._cleanStyles(container);
         self._cleanAttributes(container);
         self._cleanHeadingSpans(container);
@@ -171,7 +172,7 @@
        * Existing inline styles are preserved and take precedence (appended after).
        */
       this._applyExcelClassStyles = function(doc) {
-        var KEEP_PROPS = ['color', 'background-color', 'font-weight', 'font-style', 'text-decoration'];
+        var KEEP_PROPS = ['color', 'background-color', 'font-weight', 'font-style', 'text-decoration', 'border'];
 
         // Collect all class rules from style blocks
         var classRules = {};
@@ -585,9 +586,108 @@
       // Style and attribute cleaning
       // -----------------------------------------------------------------------
 
+      /**
+       * Normalizes verbose border longhand properties on table cells into a
+       * single border shorthand, and strips border-image noise.
+       *
+       * Word Online emits longhands:
+       *   border-width:1px; border-style:solid;
+       *   border-color:rgb(170,170,170) rgb(0,0,0) rgb(0,0,0) rgb(170,170,170);
+       *   border-image:initial;
+       * Result: border: 1px solid rgb(170, 170, 170)
+       *
+       * Excel class borders (.5pt solid black) are normalized: .5pt → 1px
+       */
+      this._normalizeBorders = function(container) {
+        container.querySelectorAll('td, th').forEach(function(el) {
+          var style = el.getAttribute('style') || '';
+          if (!style) return;
+
+          var decls = {};
+          style.split(';').forEach(function(decl) {
+            var colon = decl.indexOf(':');
+            if (colon === -1) return;
+            var prop = decl.slice(0, colon).trim().toLowerCase();
+            var val = decl.slice(colon + 1).trim();
+            if (prop) decls[prop] = val;
+          });
+
+          if ('border-width' in decls && 'border-style' in decls) {
+            // Verbose longhand form (Word Online) — collapse to shorthand
+            var width = self._firstCssValue(decls['border-width'] || '1px');
+            var bstyle = self._firstCssValue(decls['border-style'] || 'solid');
+            var color = 'border-color' in decls
+              ? self._firstCssValue(decls['border-color'])
+              : '';
+
+            // Remove all border longhand and border-image properties
+            var kept = {};
+            Object.keys(decls).forEach(function(p) {
+              if (/^border-(width|style|color|image|top|right|bottom|left|radius)/.test(p)) return;
+              kept[p] = decls[p];
+            });
+
+            if (bstyle !== 'none' && bstyle !== 'hidden') {
+              kept['border'] = width + ' ' + bstyle + (color ? ' ' + color : '');
+            }
+
+            var newStyle = Object.keys(kept).map(function(p) { return p + ': ' + kept[p]; }).join('; ');
+            if (newStyle) el.setAttribute('style', newStyle);
+            else el.removeAttribute('style');
+          } else {
+            // No verbose longhands — strip border-image noise and normalize .5pt (Excel)
+            var changed = false;
+            var cleaned = style.split(';').map(function(decl) {
+              var colon = decl.indexOf(':');
+              if (colon === -1) return decl;
+              var prop = decl.slice(0, colon).trim().toLowerCase();
+              if (prop === 'border-image') { changed = true; return null; }
+              if (prop === 'border') {
+                var normalized = decl.replace(/:\s*\.5pt\s/, ': 1px ');
+                if (normalized !== decl) { changed = true; return normalized; }
+              }
+              return decl;
+            }).filter(function(d) { return d !== null; }).join(';');
+            if (changed) {
+              if (cleaned.trim()) el.setAttribute('style', cleaned);
+              else el.removeAttribute('style');
+            }
+          }
+        });
+      };
+
+      /**
+       * Returns the first space-separated token from a CSS multi-value string,
+       * respecting values that contain spaces inside parentheses (e.g. rgb()).
+       */
+      this._firstCssValue = function(valueStr) {
+        var depth = 0;
+        var current = '';
+        for (var i = 0; i < valueStr.length; i++) {
+          var c = valueStr[i];
+          if (c === '(') { depth++; current += c; }
+          else if (c === ')') { depth--; current += c; }
+          else if (c === ' ' && depth === 0) {
+            if (current.trim()) return current.trim();
+          } else {
+            current += c;
+          }
+        }
+        return current.trim() || valueStr.trim();
+      };
+
+      // -----------------------------------------------------------------------
+
       this._cleanStyles = function(container) {
         var KEEP = ['color', 'background-color', 'font-size', 'font-weight',
           'font-style', 'text-decoration', 'text-align', 'vertical-align'];
+
+        // Border properties kept only on table-related elements
+        var KEEP_ON_TABLE = ['border', 'border-collapse'];
+        var TABLE_TAGS = ['TABLE', 'TD', 'TH', 'TR'];
+        // font-size on structural table containers is noise (Word/Excel set it as a
+        // stylesheet default, not as meaningful content formatting)
+        var NO_FONT_SIZE = ['TABLE', 'TR'];
 
         var DEFAULTS = {
           'color': ['#000000', 'black', 'windowtext', 'inherit', 'rgb(0,0,0)', 'rgb(0, 0, 0)'],
@@ -598,9 +698,13 @@
           'font-style': ['normal'],
           'vertical-align': ['baseline', 'top'],
           'text-align': ['left', 'start'],
+          'border': ['none', '0', 'initial'],
         };
 
         container.querySelectorAll('[style]').forEach(function(el) {
+          var tag = el.tagName.toUpperCase();
+          var isTableEl = TABLE_TAGS.indexOf(tag) !== -1;
+
           var cleaned = (el.getAttribute('style') || '')
             .split(';')
             .map(function(p) { return p.trim(); })
@@ -609,7 +713,11 @@
               var colon = p.indexOf(':');
               if (colon === -1) return false;
               var prop = p.slice(0, colon).trim().toLowerCase();
-              if (KEEP.indexOf(prop) === -1) return false;
+              // font-size on structural table elements is always noise
+              if (prop === 'font-size' && NO_FONT_SIZE.indexOf(tag) !== -1) return false;
+              var inGlobalKeep = KEEP.indexOf(prop) !== -1;
+              var inTableKeep = isTableEl && KEEP_ON_TABLE.indexOf(prop) !== -1;
+              if (!inGlobalKeep && !inTableKeep) return false;
               var value = p.slice(colon + 1).trim().toLowerCase()
                 .replace(/\s*!important\s*$/, '');
               return !DEFAULTS[prop] || DEFAULTS[prop].indexOf(value) === -1;
@@ -717,8 +825,17 @@
           changed = false;
           container.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6, span').forEach(function(el) {
             if (!el.textContent.trim() && !el.querySelector('img, br')) {
-              el.parentNode.removeChild(el);
-              changed = true;
+              var tag = el.tagName.toUpperCase();
+              if (tag === 'P') {
+                // Preserve empty paragraphs as visual spacers — Word uses blank
+                // paragraphs for spacing. Convert to <p><br></p> which is
+                // Summernote's native empty-paragraph representation and survives
+                // insertion without being filtered out.
+                el.innerHTML = '<br>';
+              } else {
+                el.parentNode.removeChild(el);
+                changed = true;
+              }
             }
           });
         }

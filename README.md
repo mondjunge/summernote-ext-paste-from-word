@@ -14,8 +14,10 @@ Also handles content pasted from **Microsoft Excel** (desktop and Excel Online).
   - **Excel desktop and Excel Online** (bakes class-based styles into inline styles, removes column/colgroup elements)
 - Converts Word heading styles (`MsoHeading1`–`6`, `role="heading"`, `data-ccp-parastyle`) to proper `<h1>`–`<h6>` elements
 - Reconstructs nested `<ul>`/`<ol>` lists from flat MSO list markup and Word Online list wrappers
-- Strips noise: conditional comments, MSO classes, non-visual inline styles, empty spans, `&nbsp;` artifacts
-- Keeps visual formatting: `font-weight`, `font-style`, `text-decoration`, `color`, `background-color`
+- Normalizes table borders: verbose Word Online longhand properties (`border-width`, `border-style`, `border-color`) are collapsed into a single `border` shorthand; Excel `.5pt` borders are converted to `1px`
+- Preserves empty paragraphs as `<p><br></p>` — Word uses blank paragraphs for visual spacing
+- Strips noise: conditional comments, MSO classes, non-visual inline styles, empty spans, `&nbsp;` artifacts, `font-size` on structural table elements
+- Keeps visual formatting: `font-weight`, `font-style`, `text-decoration`, `color`, `background-color`, `border` on table cells, `border-collapse` on tables
 - Falls through silently for non-Word content — regular paste behaviour is unaffected
 
 ---
